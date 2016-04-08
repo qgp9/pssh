@@ -1,0 +1,98 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+
+my $config_file = "example/config.example";
+my $config_out  = "example/config.out";
+my $backup_dir  = "example/backup";
+my $indent      = " " x 2;
+
+my $config_string = '';
+my @config_data;
+
+sub build_config {
+    open my $in_fh, '<'. $config_file or die $!,' ',$config_file;
+    for( <$in_fh> ){
+        ### Dummy :ines
+        if( /^\s*\+/ ) { 
+            next; 
+        }  
+        ### Data Lines
+        elsif( /^\s*\|/ ) {
+
+            ### manipulate comments
+            my ( $data, $comments ) = (/([^#]*)(.*)/g);
+
+            ### manipulate data
+            my ( $host, $address, $idkey, $options ) = (
+                $data =~ /^\s*\|\s*([^|\s]*)[\s*\|]*(\S*)[\s\|]*(\S*)[\s\|]*(.*)/g
+            );
+
+            ### manipulate server info
+            my ( $user, $hostname, $port ) = (
+                $address =~ /\s*(?:(\S+)@)?(\[.+?\]|[^:]+)(?::(\d+))?/g
+            );
+
+            ### At least, $hostname should be
+            die "wrong sintext at $.\n$_\n" unless  $hostname ;
+
+            ### if a server alias isn't
+            unless( $host ){
+                $host = $hostname;
+                $hostname = undef;
+            }
+
+
+            $config_string .= $comments."\n"                   if $comments;
+            $config_string .= "Host $host\n";
+            $config_string .= "${indent}HostName $hostname\n"  if $hostname;
+            $config_string .= "${indent}User $user\n"          if $user;
+            $config_string .= "${indent}Port $port\n"          if $port;
+            $config_string .= "${indent}IdentityFile $idkey\n" if $idkey;
+        } 
+        ### Anything Else
+        else {
+            $config_string .= $_;
+        }
+    }
+    close $in_fh;
+}
+
+sub write_config{
+    ### Make backup Directory
+    use File::Path;
+    unless( -d $backup_dir ){
+        File::Path::make_path($backup_dir) or die $!,' ',$backup_dir;
+    }
+    ### Make Backup file
+    use File::Copy;
+    copy( $config_out, $backup_dir.'/config-'.time.'.bak' ) or die "Copy failed: $!";
+
+    ### Write
+    open my $out_fh, '>', $config_out or die "$! $config_out";
+    print $out_fh $config_string if $config_string;
+    close $out_fh;
+}
+
+sub usage{
+    print "usage : pssh <options> \n";
+    print "\t-b : dry run\n";
+    print "\t-i : install config\n";
+}
+
+if( @ARGV > 0 ){
+    ### TODO: use GetOpts 
+    if( $ARGV[0] eq '-b' ){
+        build_config;
+        print $config_string;
+    }elsif( $ARGV[0] eq '-i'){
+        build_config;
+        write_config;
+    }
+    else {
+      ### Noting Yet
+    }
+}else{
+      ### Noting Yet
+}

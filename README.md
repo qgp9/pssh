@@ -1,2 +1,2 @@
 # pssh
-script to manage ssh/config
+A script to manage ssh/config 
