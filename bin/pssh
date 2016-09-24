@@ -3,97 +3,140 @@
 use strict;
 use warnings;
 
-my $config_file = "$ENV{HOME}/.ssh_config";
-#my $config_file = "config2.new";
-my $config_out  = "$ENV{HOME}/.ssh/config";
-my $backup_dir  = "$ENV{HOME}/.ssh/backup";
-my $indent      = " " x 2;
+my $ssh_home = "$ENV{HOME}/.ssh";
+my $config_file = "$ssh_home/.ssh_config";
+my $config_out  = "$ssh_home/config";
+my $backup_dir  = "$ssh_home/backup";
+my $indent      = ' ' x 2;
 
 my $config_string = '';
 my @config_data;
+my %variables;
 
 sub build_config {
-    open my $in_fh, '<'. $config_file or die $!,' ',$config_file;
-    for( <$in_fh> ){
-        ### Dummy :ines
-        if( /^\s*\+/ ) { 
-            next; 
-        }  
-        ### Data Lines
-        elsif( /^\s*\|/ ) {
+  open my $in_fh, '<'. $config_file or die $!,' ',$config_file;
+  while( $_ = <$in_fh> ){
 
-            ### manipulate comments
-            my ( $data, $comments ) = (/([^#]*)(.*)/g);
+    /^\s*\+/            #### Dummy :ines
+      and next; 
 
-            ### manipulate data
-            my ( $host, $address, $idkey, $options ) = (
-                $data =~ /^\s*\|\s*([^|\s]*)[\s*\|]*(\S*)[\s\|]*(\S*)[\s\|]*(.*)/g
-            );
+    /^\s*\$\w+\s*=/     #### Variable
+      and parse_variable($in_fh,$_)
+      and next;
 
-            ### manipulate server info
-            my ( $user, $hostname, $port ) = (
-                $address =~ /\s*(?:(\S+)@)?(\[.+?\]|[^:]+)(?::(\d+))?/g
-            );
+    s/(\$\{(\w+)\})/defined $variables{$2}?$variables{$2}:$1/ge;
+    s/(\$(\w+))/defined $variables{$2}?$variables{$2}:$1/ge;
 
-            ### At least, $hostname should be
-            die "wrong syntax at $.\n$_\n" unless  $hostname ;
+    s/^\s*(\|\s*)*-+//;
+    s/^\s*(\|\s*)*#/#/;
 
-            ### if a server alias isn't
-            unless( $host ){
-                $host = $hostname;
-                $hostname = undef;
-            }
+    /^\s*\|/            #### Data Lines
+      and $config_string .= parse_data_line($_) 
+      and next;
+
+    ### Anything Else
+    $config_string .= $_;
+  }
+  close $in_fh;
 
 
-            $config_string .= $comments."\n"                   if $comments;
-            $config_string .= "Host $host\n";
-            $config_string .= "${indent}HostName $hostname\n"  if $hostname;
-            $config_string .= "${indent}User $user\n"          if $user;
-            $config_string .= "${indent}Port $port\n"          if $port;
-            $config_string .= "${indent}IdentityFile $idkey\n" if $idkey;
-        } 
-        ### Anything Else
-        else {
-            $config_string .= $_;
-        }
-    }
-    close $in_fh;
 }
 
 sub write_config{
-    ### Make backup Directory
-    use File::Path;
-    unless( -d $backup_dir ){
-        File::Path::make_path($backup_dir) or die $!,' ',$backup_dir;
-    }
-    ### Make Backup file
-    use File::Copy;
-    copy( $config_out, $backup_dir.'/config-'.time.'.bak' ) or die "Copy failed: $!";
+  ### Make backup Directory
+  use File::Path;
+  unless( -d $backup_dir ){
+    File::Path::make_path($backup_dir) or die $!,' ',$backup_dir;
+  }
+  ### Make Backup file
+  use File::Copy;
+  copy( $config_out, $backup_dir.'/config-'.time.'.bak' ) or die "Copy failed: $!";
 
-    ### Write
-    open my $out_fh, '>', $config_out or die "$! $config_out";
-    print $out_fh $config_string if $config_string;
-    close $out_fh;
+  ### Write
+  open my $out_fh, '>', $config_out or die "$! $config_out";
+  print $out_fh $config_string if $config_string;
+  close $out_fh;
+}
+
+sub parse_data_line {
+  shift;
+  my $config_string;
+  ### manipulate comments
+  my ( $data, $comments ) = (/([^#]*)(.*)/g);
+
+  ### manipulate data
+  my ( $host, $address, $idkey, $options ) = (
+    $data =~ /^\s*\|\s*([^|\s]*)[\s\|]*([^\|\s]*)[\s\|]*([^|\s]*)[\s\|]*(.*)/msg
+  );
+
+  ### manipulate server info
+  my ( $user, $hostname, $port ) = (
+    $address =~ /\s*(?:(\S+)@)?(\[.+?\]|[^:]+)(?::(\d+))?/g
+  );
+
+  ### At least, $hostname should be
+  die "wrong sintext at $.\n$_\n" unless  $hostname ;
+
+  ### if a server alias isn't
+  unless( $host ){
+    $host = $hostname;
+    $hostname = undef;
+  }
+
+  $idkey='' if  defined $idkey && $idkey eq 'x'  ;
+
+  $config_string .= $comments."\n"                   if $comments;
+  $config_string .= "Host $host\n";
+  $config_string .= "${indent}HostName $hostname\n"  if $hostname;
+  $config_string .= "${indent}User $user\n"          if $user;
+  $config_string .= "${indent}Port $port\n"          if $port;
+  $config_string .= "${indent}IdentityFile $idkey\n" if $idkey;
+  $config_string .= $options                         if $options;
+
+  return $config_string;
+
+}
+
+sub parse_variable {
+  my $in_fh = shift;
+  shift;
+  /\s*\$(\w+)\s*=\s*\{(.*)\}/
+    and $variables{$1}=$2
+    and return 1;
+  /\s*\$(\w+)\s*=\s*\{(.*)/ and do {
+    my $vname = $1;
+    my $vstr  = $2.''?$2."\n":'';
+    while ( $_=<$in_fh> ){
+      /\s*\}/ and last;
+      /(\s*.+)\}/ and $vstr.=$1 and last;
+      $vstr.=$_;
+    }
+    $variables{$vname} = $vstr;
+    return 1;
+  };
+  /\s*\$(\w+)\s*=\s*(.*)/ 
+    and $variables{$1}=$2
+    and return 1;
 }
 
 sub usage{
-    print "usage : pssh <options> \n";
-    print "\t-b : dry run\n";
-    print "\t-i : install config\n";
+  print "usage : pssh <options> \n";
+  print "\t-b : dry run\n";
+  print "\t-i : install config\n";
 }
 
 if( @ARGV > 0 ){
-    ### TODO: use GetOpts 
-    if( $ARGV[0] eq '-b' ){
-        build_config;
-        print $config_string;
-    }elsif( $ARGV[0] eq '-i'){
-        build_config;
-        write_config;
-    }
-    else {
-      ### Noting Yet
-    }
+  ### TODO: use GetOpts 
+  if( $ARGV[0] eq '-b' ){
+    build_config;
+    print $config_string;
+  }elsif( $ARGV[0] eq '-i'){
+    build_config;
+    write_config;
+  }
+  else {
+    ### Noting Yet
+  }
 }else{
-      ### Noting Yet
+  ### Noting Yet
 }

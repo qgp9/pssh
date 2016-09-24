@@ -5,6 +5,17 @@
 
 ## Analyzing
 
+
+## Variable
+
+$DO_PKEY=~/.ssh/key/do/d1_id_rsa
+$VPS_COMMON_OPTION = {
+  PubkeyAuthentication yes
+  Protocol 2
+  ForwardX11 no
+}
+
+
 ## GITHUB : Every Comment will be conserved;
 +---------------+------------------+---------------------------------------+ # This is dummy lines, be ignored.
 | github-user1	|  git@github.com	 | ~/.ssh/key/github/github_user1_id_rsa | # This comment will be placed before this line.
@@ -12,18 +23,34 @@
 +---------------+------------------+---------------------------------------+ # This is dummy lines, be ignored.
 
 # DO at amsterdam
-+-------+---------------------------+-----------------------------+
-| d1    | user1@192.168.1.101	      | ~/.ssh/key/do/d1_id_rsa     |
-| d2    | user1@192.168.1.102	      | ~/.ssh/key/do/d2_id_rsa     |
-| d3    | user1@192.168.1.103	      | ~/.ssh/key/do/d3_id_rsa     |
-+-------+---------------------------+-----------------------------+
++-------+---------------------------+------------+
+| d1    | user1@192.168.1.101	      | $DO_PKEY   | $VPS_COMMON_OPTION
+| d2    | user1@192.168.1.102	      | $DO_PKEY   | $VPS_COMMON_OPTION
+| d3    | user1@192.168.1.103	      | $DO_PKEY   | $VPS_COMMON_OPTION
++-------+---------------------------+------------+
+
+# Without pkey but with variabled option
++-------+---------------------------+------------+
+| d4    | user1@192.168.1.101	      |   x        | $VPS_COMMON_OPTION  # "x" should be instead of empty space.
++-------+---------------------------+------------+
+
++-------+---------------------------+------------+
+| d4    | user1@192.168.1.101	      |            | # You don't need "x" without 4th field.
+          $VPS_COMMON_OPTION
++-------+---------------------------+------------+
+
++-------+---------------------------+------------+
+| d4    | user1@192.168.1.101	      |            | 
+|       - $VPS_COMMON_OPTION                       # just sugar for better display.
++-------+---------------------------+------------+
 
 # VULTR
-+-------+----------------------------+--------------------------------+
-| v1    | user2@192.168.2.101:13789	 | ~/.ssh/key/vultr/v1_id_rsa     |
-| v2    | user2@192.168.2.102:16523	 | ~/.ssh/key/vultr/v2_id_rsa     |
-| v3    | user2@192.168.2.103:16234  | ~/.ssh/key/vultr/v3_id_rsa     |
-+-------+----------------------------+--------------------------------+
+$VULTR_PKEY_DIR=~/.ssh/key/vultr
++-------+----------------------------+---------------------------+
+| v1    | user2@192.168.2.101:13789	 | $VULTR_PKEY_DIR/v1_id_rsa |
+| v2    | user2@192.168.2.102:16523	 | $VULTR_PKEY_DIR/v2_id_rsa |
+| v3    | user2@192.168.2.103:16234  | $VULTR_PKEY_DIR/v3_id_rsa |
++-------+----------------------------+---------------------------+
 
 # AWS Seoul
 +-------+-----------------------------+-----------------------------
