@@ -27,9 +27,10 @@ $VPS_COMMON_OPTION = {
 
 ## GITHUB : Every Comment will be conserved;
 +---------------+------------------+---------------------------------------+ # This is dummy lines, be ignored.
-| github-user1	|  git@github.com	 | ~/.ssh/key/github/github_user1_id_rsa | # This comment will be placed before this line.
-| github-user2	|  git@github.com	 | ~/.ssh/key/github/github_user2_id_rsa | 
+| github-user1  |  git@github.com  | ~/.ssh/key/github/github_user1_id_rsa | # This comment will be placed before this line.
+| github-user2  |  git@github.com  | ~/.ssh/key/github/github_user2_id_rsa | 
 +---------------+------------------+---------------------------------------+ # This is dummy lines, be ignored.
+
 
 # DO at amsterdam
 +-------+---------------------------+------------+
