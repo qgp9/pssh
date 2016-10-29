@@ -14,6 +14,8 @@ But if any line begin with `|`, `$` or `-`, they will be translate by `pssh`  fo
 
 ## Example of `.ssh-config`
 * more on https://github.com/qgp9/pssh/blob/master/example/.ssh_config
+
+
 ```
 ## Variable
 $DO_PKEY=~/.ssh/key/do/d1_id_rsa
@@ -31,13 +33,12 @@ $VPS_COMMON_OPTION = {
 
 # DO at amsterdam
 +-------+---------------------------+------------+
-| d1    | user1@192.168.1.101	      | $DO_PKEY   | $VPS_COMMON_OPTION
-| d2    | user1@192.168.1.102	      | $DO_PKEY   | $VPS_COMMON_OPTION
+| d1    | user1@192.168.1.101       | $DO_PKEY   | $VPS_COMMON_OPTION
+| d2    | user1@192.168.1.102       | $DO_PKEY   | $VPS_COMMON_OPTION
 +-------+---------------------------+------------+
-
 # Without pkey but with variabled option
 +-------+---------------------------+------------+
-| d4    | user1@192.168.1.101	      |   x        | $VPS_COMMON_OPTION  # "x" should be instead of empty space.
+| d4    | user1@192.168.1.101       |   x        | $VPS_COMMON_OPTION  # "x" should be instead of empty space.
 +-------+---------------------------+------------+
 
 +-------+---------------------------+------------+
