@@ -9,7 +9,7 @@ A script to manage ssh/config
 
 The configuration formate is super-set of `.ssh/config` format. So you can put every raw configurations in `.ssh-config`
 
-But if any line begin with `|`, `$` or `-`, they will be translate by `pssh`  formater. 
+But if any line begin with `|`, `$` or `-`, they will be translated by `pssh`  formater. 
 
 
 ## Example of `.ssh-config`
