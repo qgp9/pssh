@@ -42,7 +42,7 @@ $VPS_COMMON_OPTION = {
 +-------+---------------------------+------------+
 
 +-------+---------------------------+------------+
-| d4    | user1@192.168.1.101	      |            | # You don't need "x" without 4th field.
+| d4    | user1@192.168.1.101       |            | # You don't need "x" without 4th field.
           $VPS_COMMON_OPTION
           ForwardX11 yes # .ssh/config format is always avaiable in the place
 +-------+---------------------------+------------+
