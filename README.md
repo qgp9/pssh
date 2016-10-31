@@ -9,9 +9,22 @@ A script to manage ssh/config
 
 The configuration formate is super-set of `.ssh/config` format. So you can put every raw configurations in `.ssh-config`
 
-But if any line begin with `|`, `$` ,`+` or `-`, they will be translated by `pssh`  formater. 
+But if any line begin with `|`, `$` ,`+` or `-`, they will be translated by `pssh`  formater.
 
 ## Rules
+* A line begins with
+  1. `/^\s*[^|$+-]/` : Just leave it as it is
+  1. `/^\s*\+/` : Ignore a line.
+  2. `/^\s*\|/` : Parse a line as an `entry`
+  1. `/^\s*\$/` : Parse a line as `variable` ( both of definition or using)
+  2. `/^\s*\-/` : Remove until `-` and leave a line there
+* Variable
+  * If a `variable` comes before `=` in a line ( `/^\s*\$.*=/`), it's a `definition`
+  * Otherwise a `using`, so just translated to a content
+* Entry
+  * After first `|`, all following `|`s are dealt as spaces
+  * Include first `#`, all followings are `comments`. They will be placed before the line.
+  * fields are `| alias | user@server:port | key | options`
 
 
 ## Example of `.ssh-config`
@@ -30,7 +43,7 @@ $VPS_COMMON_OPTION = {
 ## GITHUB : Every Comment will be conserved;
 +---------------+------------------+---------------------------------------+ # This is dummy lines, be ignored.
 | github-user1  |  git@github.com  | ~/.ssh/key/github/github_user1_id_rsa | # This comment will be placed before this line.
-| github-user2  |  git@github.com  | ~/.ssh/key/github/github_user2_id_rsa | 
+| github-user2  |  git@github.com  | ~/.ssh/key/github/github_user2_id_rsa |
 +---------------+------------------+---------------------------------------+ # This is dummy lines, be ignored.
 
 
