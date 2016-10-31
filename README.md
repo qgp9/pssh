@@ -11,6 +11,8 @@ The configuration formate is super-set of `.ssh/config` format. So you can put e
 
 But if any line begin with `|`, `$` ,`+` or `-`, they will be translated by `pssh`  formater. 
 
+## Rules
+
 
 ## Example of `.ssh-config`
 * more on https://github.com/qgp9/pssh/blob/master/example/.ssh_config
