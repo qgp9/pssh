@@ -2,8 +2,33 @@
 A script to manage ssh/config
 
 ## TL;DR
-* configuration file :  `~/.ssh/.ssh-config`
-* compile : `pssh -i`
+1. Put a configuration file at  `~/.ssh/pssh/.ssh-config`
+2. Install it : `pssh install`
+
+## Big chages of files and command options!!
+* All files are under ~/.ssh/pssh ( essentialy just a .ssh-config )
+* Usage
+```
+$ pssh -h
+# usage : pssh <command> <options>
+# Commands
+    cat        : Print Pssh config file
+    edit       : Edit Pssh config file
+    install    : Install Pssh config file to $HOME/.ssh/config
+    key_deploy : Deploy pub key to ssh server : pssh key_deploy <server> <file>
+    path       : Print Path of pssh directory
+    test       : Compile $HOME/.ssh/pssh/.ssh_config and print on screen
+# Options
+    -c --config          : Use custom pssh config file
+    -h --help            : Display Help
+```
+  * NOTE : `edit` doesn't mean installing after edit. One needs additional call of `pssh install` to apply changes.
+
+* Bash completion comes!!
+```
+echo "eval $(pssh bash_completion_template)" >> ~/.bash_profile
+```
+  * NOTE : You may need an additional path in advance.
 
 ## Short Description
 

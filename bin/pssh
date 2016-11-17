@@ -2,19 +2,112 @@
 
 use strict;
 use warnings;
+use IO::File;
+use Getopt::Long;
+use v5.010;
 
-my $ssh_home = "$ENV{HOME}/.ssh";
-my $config_file = "$ssh_home/.ssh_config";
-my $config_out  = "$ssh_home/config";
-my $backup_dir  = "$ssh_home/backup";
+### CUSTOM CONFIGURATION
+my $O_SSH_DIR     = "$ENV{HOME}/.ssh";
+my $O_SSH_CONFIG  = "$ENV{HOME}/.ssh/config";
+
+my $PSSH_DIR    = "$O_SSH_DIR/pssh";
+my $PSSH_CONFIG = "$PSSH_DIR/.ssh_config";
+
+my $PSSH_BAK    = "$PSSH_DIR/backup";
+my $PSSH_TMP    = "$PSSH_DIR/tmp";
+
+my $editor      = $ENV{EDIT_COMMAND} || $ENV{EDITOR};
 my $indent      = ' ' x 2;
 
+my %custom_command = (
+);
+my @custom_options = (
+);
+
+### Let's Start!!
+### Site Configuration
 my $config_string = '';
+my @option_template = ( 'config|c=s', 'h|help');
+my @options_string = qw/-c --config -h --help/;
+my @options_string2 = (
+  [ [qw/-c --config/], 'Use custom pssh config file' ],
+  [ [qw/-h --help/],   'Display Help' ],
+);
+
+my %commands = (
+
+  'cat'         => [ \&pssh_cat, 
+    "Print Pssh config file" 
+  ],
+
+  'path'        => [ sub { print "$PSSH_DIR\n"}, 
+    "Print Path of pssh directory" 
+  ],
+
+  'key_deploy'  => [ \&pssh_key_deploy,
+    "Deploy pub key to ssh server : pssh key_deploy <server> <file>"
+  ],
+
+  'edit'     => [ sub { system($editor,$PSSH_CONFIG); },
+    "Edit Pssh config file" 
+  ],
+
+  'install'  => [ sub { build_config() and write_config() }, 
+    "Install Pssh config file to $O_SSH_CONFIG"
+  ],
+
+  #'list'     => [ sub { print_host_list(); },
+  'test'     => [ sub {  build_config() and print $config_string },
+    "Compile $PSSH_CONFIG and print on screen"
+  ],
+  #'view'       => sub {},
+);
+
+my $command_path = {
+  config=>[],
+  -default=>'config',
+  -description=>'Print Some',
+  -help=>'',
+};
+
+#### Control completion command in the begining
+if( @ARGV > 0 ){
+  if( $ARGV[0] eq 'completion' ){
+    shift @ARGV;
+    my $COMP_CWORD = $ENV{COMP_CWORD} ;
+    my $cur = '';
+    $cur = pop @ARGV if $COMP_CWORD != $#ARGV || $ARGV[-1]=~/^\s*/;
+    if ( $cur =~ /^-/ ){
+      /^$cur/ and print $_," " for @options_string;
+    }elsif( $ARGV[-1] =~ /^(-c|--config)$/ ){
+      print join ' ', map{ -d && "$_/\n" || $_ }glob "'$cur*'";
+    }else{
+      print join ' ',grep { /^$cur/ } keys %commands;
+    }
+    exit 0;
+  }
+  if( $ARGV[0] eq 'bash_completion_template' ){
+    pssh_bash_completion_template();
+    exit 0;
+  }
+}
+
+#### Site Variables
 my @config_data;
+my @config_lines;
 my %variables;
+my %configs;
+my @configs;
+
+sub _do_what_config {
+  my $cb = shift or die $!;
+  open my $in_fh, '<'. $PSSH_CONFIG or die $!,' ',$PSSH_CONFIG;
+  $cb->($in_fh);
+  close $in_fh;
+}
 
 sub build_config {
-  open my $in_fh, '<'. $config_file or die $!,' ',$config_file;
+  open my $in_fh, '<'. $PSSH_CONFIG or die $!,' ',$PSSH_CONFIG;
   while( $_ = <$in_fh> ){
 
     /^\s*\+/            #### Dummy :ines
@@ -38,22 +131,20 @@ sub build_config {
     $config_string .= $_;
   }
   close $in_fh;
-
-
 }
 
 sub write_config{
   ### Make backup Directory
   use File::Path;
-  unless( -d $backup_dir ){
-    File::Path::make_path($backup_dir) or die $!,' ',$backup_dir;
+  unless( -d $PSSH_BAK ){
+    File::Path::make_path($PSSH_BAK) or die $!,' ',$PSSH_BAK;
   }
   ### Make Backup file
   use File::Copy;
-  copy( $config_out, $backup_dir.'/config-'.time.'.bak' ) or die "Copy failed: $!";
+  copy( $O_SSH_CONFIG, $PSSH_BAK.'/config-'.time.'.bak' ) or die "Copy failed: $!";
 
   ### Write
-  open my $out_fh, '>', $config_out or die "$! $config_out";
+  open my $out_fh, '>', $O_SSH_CONFIG or die "$! $O_SSH_CONFIG";
   print $out_fh $config_string if $config_string;
   close $out_fh;
 }
@@ -93,6 +184,17 @@ sub parse_data_line {
   $config_string .= "${indent}IdentityFile $idkey\n" if $idkey;
   $config_string .= $options                         if $options;
 
+  my $conf = {
+    Host      => $host, 
+    HostName  => $hostname,
+    User      => $user,
+    Port      => $port,
+    IdentityFile => $idkey,
+    options      => $options,
+  };
+  $configs{$address} = $conf;
+  push @configs, $conf;
+
   return $config_string;
 
 }
@@ -119,24 +221,103 @@ sub parse_variable {
     and return 1;
 }
 
-sub usage{
-  print "usage : pssh <options> \n";
-  print "\t-b : dry run\n";
-  print "\t-i : install config\n";
+sub get_host_list {
+  build_config unless %configs;
+  return sort { $configs{$a}{Host} cmp $configs{$b}{Host} }  keys %configs;
 }
 
+sub print_host_list {
+  my @list = get_host_list;
+  for ( @list ){
+    my $c = $configs{$_};
+    my $u = $c->{User};
+    my $p = $c->{Port};
+    my $hh = $c->{HostName};
+    $u  = $u ? $u.'@' : '';
+    $p  = $p ? ':'.$p : '';
+    $hh = $hh ? $hh.$p : $c->{Host}.$p;
+    printf "%10s%-30s%s\n", $u, $c->{Host}, $hh;
+  }
+}
+
+sub usage{
+  print "# usage : pssh <command> <options> \n";
+  print "# Commands\n";
+  for ( sort keys %commands ){
+    my $val = $commands{$_};
+    my $type = ref $val;
+    my $des = sprintf "    %-10s : ",$_;;
+    $des .= $val->{description}||'' if 'HASH' eq $type;
+    $des .= $val->[1]||'' if 'ARRAY' eq $type;
+    print $des,"\n";
+  }
+  print "# Options\n";
+  for( @options_string2 ){
+    printf "    %-20s : %s\n", join(' ',@{$_->[0]}), $_->[1];
+  }
+}
+
+sub pssh_bash_completion_template {
+  print q|function _pssh_completion { export COMP_CWORD COMP_POINT COMP_LINE;COMPREPLY=( $(pssh completion "${COMP_WORDS[@]}" ) ); }; complete -o nospace -F _pssh_completion pssh |;
+}
+
+sub pssh_cat {
+  my $file = shift || $PSSH_CONFIG;
+  my $fh = IO::File->new($PSSH_CONFIG,'r'); 
+  print <$fh>;
+}
+
+sub pssh_key_deploy {
+  my ( $server, $key ) = @_;
+  my ( $D, $A ) =qw'~/.ssh ~/.ssh/authorized_keys';
+  print( qq{cat $key | ssh $server "mkdir -p $D && cat >> $A"},"i\n" );
+  system( qq{cat $key | ssh $server "mkdir -p $D && cat >> $A"} );
+}
+
+
+
+
 if( @ARGV > 0 ){
-  ### TODO: use GetOpts 
-  if( $ARGV[0] eq '-b' ){
-    build_config;
-    print $config_string;
-  }elsif( $ARGV[0] eq '-i'){
-    build_config;
-    write_config;
+  #say Dumper \@ARGV;
+  my %option;
+  my @com;
+  Getopt::Long::Configure ("bundling");
+  GetOptions (\%option,
+    @option_template,
+    '<>'=>sub{
+      push @com, @_;
+    }
+  );
+  #say Dumper \%option, \@com, \@ARGV;
+  if( $option{config} ){
+    $PSSH_CONFIG = $option{config};
+    die "ERROR : $PSSH_CONFIG doesn't exists." unless -e $PSSH_CONFIG;
   }
-  else {
-    ### Noting Yet
+
+  my $com = shift @com;
+
+  ## Check command
+  unless( $com && exists $commands{$com} ){
+    usage();
+    exit 1;
   }
-}else{
-  ### Noting Yet
+  if( $option{h} ){
+    usage();
+    exit 0;
+  }
+
+  if( $commands{$com} ){
+    my $command = $commands{$com};
+    my $type = ref $command;
+    if( 'CODE' eq $type ){ 
+      $command->(@ARGV);
+    }elsif ( 'HASH' eq $type ){
+      $command->{command}->(@ARGV);
+    }elsif ( 'ARRAY' eq $type ){
+      $command->[0]->(@ARGV);
+    }
+    exit;
+  }
+
+  #system $editor, $PSSH_CONFIG;
 }
