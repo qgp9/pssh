@@ -7,7 +7,6 @@ A script to manage ssh/config
 
 ## Usage
 * All files are under ~/.ssh/pssh ( essentialy just a .ssh-config )
-* Usage
 ```
 $ pssh -h
 # usage : pssh <command> <options> 
@@ -34,13 +33,13 @@ $ pssh -h
 ```
   * NOTE : `edit` doesn't mean installing after edit. One needs additional call of `pssh install` to apply changes.
 
-* Bash completion comes!!
+* Bash completion
 ```
 echo 'eval $(pssh bash_completion_template)' >> ~/.bash_profile
 ```
   * NOTE : You may need an additional path in advance.
 
-## Short Description
+## Descriptions
 
 The configuration formate is super-set of `.ssh/config` format. So you can put every raw configurations in `.ssh-config`
 
@@ -52,14 +51,14 @@ But if any line begin with `|`, `$` ,`+` or `-`, they will be translated by `pss
   | Begins with | RegExp | Descriptions |
   |:-----------:|:------:|:-------------|
   | `+`     | `/^\s*\+/` | Ignore a line. |
-  | `\|`     | `/^\s*\|/` | Parse a line as an `entry` |
+  | `\|`    | `/^\s*\|/` | Parse a line as an `entry` |
   | `$`     | `/^\s*\$/` | Parse a line as `variable` (both of definition or using) |
   | `-`     | `/^\s*\-/` | Remove until `-` and leave a line there |
   | `@@`    | `/^\s*@@/` | Group |
   | others  |            | Just leave it as it is |
 
 
-  All white spaces before triggers are allowed
+  White spaces before triggers are allowed
 
 * Variable
   * If a `variable` comes before `=` in a line ( `/^\s*\$.*=/`), it's a `definition`
