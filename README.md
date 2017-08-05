@@ -52,7 +52,7 @@ But if any line begin with `|`, `$` ,`+` or `-`, they will be translated by `pss
   | Begins with | RegExp | Descriptions |
   |:-----------:|:------:|:-------------|
   | `+`     | `/^\s*\+/` | Ignore a line. |
-  | `|`     | `/^\s*\|/` | Parse a line as an `entry` |
+  | `\|`     | `/^\s*\|/` | Parse a line as an `entry` |
   | `$`     | `/^\s*\$/` | Parse a line as `variable` (both of definition or using) |
   | `-`     | `/^\s*\-/` | Remove until `-` and leave a line there |
   | `@@`    | `/^\s*@@/` | Group |
