@@ -10,17 +10,27 @@ A script to manage ssh/config
 * Usage
 ```
 $ pssh -h
-# usage : pssh <command> <options>
+# usage : pssh <command> <options> 
+
 # Commands
-    cat        : Print Pssh config file
+    cat        : Print Pssh config file with grep
+                 usage: pssh cat [string to grep]
     edit       : Edit Pssh config file
-    install    : Install Pssh config file to $HOME/.ssh/config
+    install    : Install Pssh config file to /home/pung96/.ssh/config
     key_deploy : Deploy pub key to ssh server : pssh key_deploy <server> <file>
+    list       : Host List
+                 usage: pssh list [string to grep] [-g [group index]] [-G [grep in groups]]
+                 -g withoud 'group index' will list only a group list
+                 -G will grep group names and inline comments and print with it's hosts
     path       : Print Path of pssh directory
-    test       : Compile $HOME/.ssh/pssh/.ssh_config and print on screen
+    test       : Compile /home/pung96/.ssh/pssh/.ssh_config and print on screen
+
 # Options
     -c --config          : Use custom pssh config file
     -h --help            : Display Help
+    -b                   : display without color
+    -g --group           : group option for list
+    -G                   : group option for list
 ```
   * NOTE : `edit` doesn't mean installing after edit. One needs additional call of `pssh install` to apply changes.
 
@@ -34,15 +44,22 @@ echo "eval $(pssh bash_completion_template)" >> ~/.bash_profile
 
 The configuration formate is super-set of `.ssh/config` format. So you can put every raw configurations in `.ssh-config`
 
-But if any line begin with `|`, `$` ,`+` or `-`, they will be translated by `pssh`  formater.
+But if any line begin with `|`, `$` ,`+` or `-`, they will be translated by `pssh` formater.
 
 ## Rules
 * A line begins with
-  1. `/^\s*[^|$+-]/` : Just leave it as it is
-  1. `/^\s*\+/` : Ignore a line.
-  2. `/^\s*\|/` : Parse a line as an `entry`
-  1. `/^\s*\$/` : Parse a line as `variable` ( both of definition or using)
-  2. `/^\s*\-/` : Remove until `-` and leave a line there
+  | Begins with | RegExp | Descriptions |
+  |:-----------:|:------:|:-------------|
+  | `+`     | `/^\s*\+/` | Ignore a line. |
+  | `|`     | `/^\s*\|/` | Parse a line as an `entry` |
+  | `$`     | `/^\s*\$/` | Parse a line as `variable` (both of definition or using) |
+  | `-`     | `/^\s*\-/` | Remove until `-` and leave a line there |
+  | `@@`    | `/^\s*@@/` | Group |
+  | others  |            | Just leave it as it is |
+
+
+  All white spaces before triggers are allowed
+
 * Variable
   * If a `variable` comes before `=` in a line ( `/^\s*\$.*=/`), it's a `definition`
   * Otherwise a `using`, so just translated to a content
@@ -53,9 +70,13 @@ But if any line begin with `|`, `$` ,`+` or `-`, they will be translated by `pss
 
 
 ## Example of `.ssh-config`
-* more on https://github.com/qgp9/pssh/blob/master/example/.ssh_config
+* more on 
+	https://github.com/qgp9/pssh/blob/master/example/.ssh_config
+* and compiled `config` by `pssh test`
+  https://github.com/qgp9/pssh/blob/master/example/config
 
 
+### Short example
 ```
 ## Variable
 $DO_PKEY=~/.ssh/key/do/d1_id_rsa
@@ -65,14 +86,14 @@ $VPS_COMMON_OPTION = {
   ForwardX11 no
 }
 
-## GITHUB : Every Comment will be conserved;
+@@ GITHUB : Every Comment will be conserved;
 +---------------+------------------+---------------------------------------+ # This is dummy lines, be ignored.
 | github-user1  |  git@github.com  | ~/.ssh/key/github/github_user1_id_rsa | # This comment will be placed before this line.
 | github-user2  |  git@github.com  | ~/.ssh/key/github/github_user2_id_rsa |
 +---------------+------------------+---------------------------------------+ # This is dummy lines, be ignored.
 
 
-# DO at amsterdam
+@@ DO at amsterdam
 +-------+---------------------------+------------+
 | d1    | user1@192.168.1.101       | $DO_PKEY   | $VPS_COMMON_OPTION
 | d2    | user1@192.168.1.102       | $DO_PKEY   | $VPS_COMMON_OPTION

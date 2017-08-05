@@ -16,12 +16,13 @@ $VPS_COMMON_OPTION = {
 }
 
 
-## GITHUB : Every Comment will be conserved;
+@@ GITHUB : Every Comment will be conserved;
 +---------------+------------------+---------------------------------------+ # This is dummy lines, be ignored.
 | github-user1	|  git@github.com  | ~/.ssh/key/github/github_user1_id_rsa | # This comment will be placed before this line.
 | github-user2	|  git@github.com  | ~/.ssh/key/github/github_user2_id_rsa | 
 +---------------+------------------+---------------------------------------+ # This is dummy lines, be ignored.
 
+@@ VPS
 # DO at amsterdam
 +-------+---------------------------+------------+
 | d1    | user1@192.168.1.101       | $DO_PKEY   | $VPS_COMMON_OPTION
@@ -52,10 +53,14 @@ $VULTR_PKEY_DIR=~/.ssh/key/vultr
 | v3    | user2@192.168.2.103:16234  | $VULTR_PKEY_DIR/v3_id_rsa |
 +-------+----------------------------+---------------------------+
 
-# AWS Seoul
+
+
+@@ AWS Seoul
 +-------+-----------------------------+-----------------------------
 | a1    | ubuntu@192.168.3.101:12643  | ~/.ssh/key/aws/a1_id_rsa   |
 +-------+-----------------------------+-----------------------------
+
+@@ ETC
 
 # Servers with configurations
 +-------+-----------------------------------------+-----------------------------
@@ -74,7 +79,6 @@ $VULTR_PKEY_DIR=~/.ssh/key/vultr
 | myserver    root@myserver.com   ~/.ssh/key/mykey # and comment
 # without '|' but also without server name
 || root@myserver2.com   ~.ssh/key/mykey
-
 
 Host *
 Protocol 2

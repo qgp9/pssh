@@ -2,9 +2,12 @@
 
 use strict;
 use warnings;
-use IO::File;
-use Getopt::Long;
 use v5.010;
+use Data::Dumper;
+use Getopt::Long;
+use IO::File;
+use Term::ANSIColor qw( colored colorstrip );
+
 
 ### CUSTOM CONFIGURATION
 my $O_SSH_DIR     = "$ENV{HOME}/.ssh";
@@ -16,7 +19,7 @@ my $PSSH_CONFIG = "$PSSH_DIR/.ssh_config";
 my $PSSH_BAK    = "$PSSH_DIR/backup";
 my $PSSH_TMP    = "$PSSH_DIR/tmp";
 
-my $editor      = $ENV{EDIT_COMMAND} || $ENV{EDITOR};
+my $editor      = $ENV{EDIT_COMMAND} || $ENV{EDITOR} || 'vim';
 my $indent      = ' ' x 2;
 
 my %custom_command = (
@@ -27,77 +30,59 @@ my @custom_options = (
 ### Let's Start!!
 ### Site Configuration
 my $config_string = '';
-my @option_template = ( 'config|c=s', 'h|help');
-my @options_string = qw/-c --config -h --help/;
+my %option = ();   # Commandline option
+my @option_template = ( 'config|c=s', 'h|help', 'b', 'g|group:s', 'G=s');
+my @options_string = qw/-c --config -h --help -g --group -G/;
 my @options_string2 = (
   [ [qw/-c --config/], 'Use custom pssh config file' ],
   [ [qw/-h --help/],   'Display Help' ],
+  [ [qw/-b/],   'display without color' ],
+  [ [qw/-g --group/],   'group option for list' ],
+  [ [qw/-G/],           'group option for list' ],
 );
+my %commands = ();
 
-my %commands = (
+sub comm { $commands{$_[0]} = $_[1] }
 
-  'cat'         => [ \&pssh_cat, 
-    "Print Pssh config file" 
-  ],
+comm cat      => [ \&pssh_cat, 
+  [
+    "Print Pssh config file with grep",
+    scolored("usage: pssh cat [string to grep]", "bright_magenta")
+  ]
+];
+comm edit     => [ sub { system($editor,$PSSH_CONFIG); },
+  "Edit Pssh config file", 
+];
+comm install  => [ sub { build_config() and write_config() }, 
+  "Install Pssh config file to $O_SSH_CONFIG"
+];
+comm key_deploy  => [ \&pssh_key_deploy,
+  "Deploy pub key to ssh server : pssh key_deploy <server> <file>"
+];
+comm list     => [ sub { print_host_list(@_); },
+  [
+    'Host List',
+    scolorf(0,"usage: pssh list [string to grep] [-g [group index]] [-G [grep in groups]]", 'bright_magenta'),
+    "-g withoud 'group index' will list only a group list",
+    "-G will grep group names and inline comments and print with it's hosts",
+  ]
+];
+comm path     => [ sub { print "$PSSH_DIR\n"}, 
+  "Print Path of pssh directory" 
+];
+comm test    => [ sub {  build_config() and pack_config() and print $config_string },
+  "Compile $PSSH_CONFIG and print on screen"
+];
 
-  'path'        => [ sub { print "$PSSH_DIR\n"}, 
-    "Print Path of pssh directory" 
-  ],
-
-  'key_deploy'  => [ \&pssh_key_deploy,
-    "Deploy pub key to ssh server : pssh key_deploy <server> <file>"
-  ],
-
-  'edit'     => [ sub { system($editor,$PSSH_CONFIG); },
-    "Edit Pssh config file" 
-  ],
-
-  'install'  => [ sub { build_config() and write_config() }, 
-    "Install Pssh config file to $O_SSH_CONFIG"
-  ],
-
-  #'list'     => [ sub { print_host_list(); },
-  'test'     => [ sub {  build_config() and print $config_string },
-    "Compile $PSSH_CONFIG and print on screen"
-  ],
-  #'view'       => sub {},
-);
-
-my $command_path = {
-  config=>[],
-  -default=>'config',
-  -description=>'Print Some',
-  -help=>'',
-};
-
-#### Control completion command in the begining
-if( @ARGV > 0 ){
-  if( $ARGV[0] eq 'completion' ){
-    shift @ARGV;
-    my $COMP_CWORD = $ENV{COMP_CWORD} ;
-    my $cur = '';
-    $cur = pop @ARGV if $COMP_CWORD != $#ARGV || $ARGV[-1]=~/^\s*/;
-    if ( $cur =~ /^-/ ){
-      /^$cur/ and print $_," " for @options_string;
-    }elsif( $ARGV[-1] =~ /^(-c|--config)$/ ){
-      print join ' ', map{ -d && "$_/\n" || $_ }glob "'$cur*'";
-    }else{
-      print join ' ',grep { /^$cur/ } keys %commands;
-    }
-    exit 0;
-  }
-  if( $ARGV[0] eq 'bash_completion_template' ){
-    pssh_bash_completion_template();
-    exit 0;
-  }
-}
 
 #### Site Variables
-my @config_data;
-my @config_lines;
+my @config_string;
 my %variables;
 my %configs;
 my @configs;
+my @groups;
+my %groups;
+my @option_G;
 
 sub _do_what_config {
   my $cb = shift or die $!;
@@ -108,29 +93,58 @@ sub _do_what_config {
 
 sub build_config {
   open my $in_fh, '<'. $PSSH_CONFIG or die $!,' ',$PSSH_CONFIG;
-  while( $_ = <$in_fh> ){
 
-    /^\s*\+/            #### Dummy :ines
+  push @configs, {_type => 'head'};
+
+  while( $_ = <$in_fh> ){
+    my $o = $_;
+
+    /^\s*\+/            #### Dummy :Lines. Just ignore and remove them
       and next; 
 
     /^\s*\$\w+\s*=/     #### Variable
       and parse_variable($in_fh,$_)
       and next;
 
+    # interpolate variables
     s/(\$\{(\w+)\})/defined $variables{$2}?$variables{$2}:$1/ge;
     s/(\$(\w+))/defined $variables{$2}?$variables{$2}:$1/ge;
 
     s/^\s*(\|\s*)*-+//;
     s/^\s*(\|\s*)*#/#/;
 
+    s/^\s*@@+\s*(\w+)/## Groups: $1 /
+      and push @configs, {_type => 'group', _name => $1, _raw_string => $o};
+
+    # TODO add to configs here?
     /^\s*\|/            #### Data Lines
-      and $config_string .= parse_data_line($_) 
+      and parse_data_line($_) 
       and next;
 
+    /^\s*HOST\s+(\s+)/
+      and push @configs, {HOST => $1, _type => 'raw'}; # TODO and $config{}
+
+
     ### Anything Else
-    $config_string .= $_;
+    $config_string .= $_; # Temporary. TODO remove this after test
+    $configs[-1]{_sub_string} .= $_;
   }
   close $in_fh;
+}
+
+sub pack_config {
+  $config_string ='';
+  for my $i (0 .. @configs) {
+    my $conf = $configs[$i];
+    if (($conf->{_type} || '') eq 'data') {
+      $config_string .= "\n";
+      $config_string .= $conf->{_config_string} || '';
+      $conf->{options}
+        and $config_string .= $indent.$conf->{options};
+    }
+    $config_string .= $conf->{_sub_string} || '';
+  }
+  1;
 }
 
 sub write_config{
@@ -151,9 +165,14 @@ sub write_config{
 
 sub parse_data_line {
   shift;
-  my $config_string;
-  ### manipulate comments
-  my ( $data, $comments ) = (/([^#]*)(.*)/g);
+  my $o = $_;
+
+  my $conf_string = '';
+
+  my @lines = split "\n", $_;
+
+  ### manipulate comments after data
+  my ( $data, $comments ) = $lines[0] =~ (/([^#]*)(.*)/g);
 
   ### manipulate data
   my ( $host, $address, $idkey, $options ) = (
@@ -166,7 +185,7 @@ sub parse_data_line {
   );
 
   ### At least, $hostname should be
-  die "wrong sintext at $.\n$_\n" unless  $hostname ;
+  die "wrong syntext at $.\n$_\n" unless  $hostname ;
 
   ### if a server alias isn't
   unless( $host ){
@@ -176,27 +195,32 @@ sub parse_data_line {
 
   $idkey='' if  defined $idkey && $idkey eq 'x'  ;
 
-  $config_string .= $comments."\n"                   if $comments;
-  $config_string .= "Host $host\n";
-  $config_string .= "${indent}HostName $hostname\n"  if $hostname;
-  $config_string .= "${indent}User $user\n"          if $user;
-  $config_string .= "${indent}Port $port\n"          if $port;
-  $config_string .= "${indent}IdentityFile $idkey\n" if $idkey;
-  $config_string .= $options                         if $options;
+  $conf_string .= $comments."\n"                   if $comments;
+  $conf_string .= "Host $host\n";
+  $conf_string .= "${indent}HostName $hostname\n"  if $hostname;
+  $conf_string .= "${indent}User $user\n"          if $user;
+  $conf_string .= "${indent}Port $port\n"          if $port;
+  $conf_string .= "${indent}IdentityFile $idkey\n" if $idkey;
+
+  $options .= "\n".join "\n", @lines[1..$#lines] if @lines > 1;
+  #$conf_string .= $options                   if $options;
 
   my $conf = {
+    _type     => 'data',
     Host      => $host, 
     HostName  => $hostname,
     User      => $user,
     Port      => $port,
     IdentityFile => $idkey,
     options      => $options,
+    _config_string => $conf_string,
+    _raw_string => $lines[0],
+    _raw_strings => $o,
   };
   $configs{$address} = $conf;
   push @configs, $conf;
 
-  return $config_string;
-
+  return $conf_string;
 }
 
 sub parse_variable {
@@ -221,39 +245,299 @@ sub parse_variable {
     and return 1;
 }
 
+=pod
+  get_host_list
+
+  Generate Host/Group List with options/sub command
+
+  1. if first argument is true, 
+    * Grep it though '_raw_string' of all cofing
+    * Case insensitive
+
+  2. if option '-g' is applied without value
+    * Print only group list
+
+  3. if option '-g' is applied with an alphabets /[a-zA-Z]\.?/
+    * Print a corespond group and hosts
+=cut
+
 sub get_host_list {
-  build_config unless %configs;
-  return sort { $configs{$a}{Host} cmp $configs{$b}{Host} }  keys %configs;
+
+  build_config unless @configs;
+  pack_config_info();
+
+  # To Fill and return
+  my @list;
+  my @_configs = @configs;
+
+  ## OPTION G
+  if ($option{G}) {
+    @_configs = ();
+    my $regx = join '|', split /\W/, $option{G};
+    my %igroups = ();
+    for my $g ( @groups ){
+      $g->{_raw_string} =~ /$regx/io
+        and $igroups{$g->{_igroup}} = 1;
+    }
+    for my $c ( @configs ){
+      $c->{_igroup} && $igroups{$c->{_igroup}}
+        and push @_configs, $c
+    }
+    #return @list
+  }
+
+  ## Others
+  my ($subcom) = @_;
+
+  # options
+  my $groupOnly = undef;
+  my %igroups;
+  my $grep_group = undef;
+
+  if (defined $option{g}){
+    my $g = $option{g};
+    $groupOnly = 1 if $g eq '';
+    %igroups = map {uc($_) => 1} grep /[a-zA-Z]/, split '', $g
+  }
+
+  for my $c ( @_configs ){
+
+    my $type      = $c->{_type};
+    my $raw       = $c->{_raw_string} || '';
+    #my $igroup    = $c->{_igroup};
+    #my $ihost     = $c->{_ihost};
+    my $is_group  = $type eq 'group';
+    my $is_data   = $type eq 'data';
+
+    # Group Only
+    next if $groupOnly && !$is_group;
+
+    # grep
+    if ($subcom && !($option{G} && $is_group)) {
+      $raw =~ /$subcom/oi
+        or next;
+    }
+
+    # Filter Group
+    next if %igroups && !$igroups{$c->{_igroup} || ''};
+
+    # Push to list
+    push @list, $c;
+  }
+
+  return @list
+}
+
+sub pack_config_info {
+  build_config unless @configs;
+  my $ihost = 1;
+  my $igroup = undef;
+  my $index = -1;
+  if ($configs[0]{_type} ne 'group') {
+    unshift @configs, {_type => 'group', _name => 'HEAD', _raw_string => 'HEAD'}
+  }
+  for my $c ( @configs ){
+    $index++;
+    $c->{_index}  = $index;
+
+    if ($c->{_type} eq 'group') {
+      $igroup and $igroup++ or $igroup = 'A';
+      $c->{_igroup} = $igroup;
+      push @groups, $c;
+      next;
+    }
+
+    if ($c->{_type} eq 'data') {
+      $c->{_ihost} = $ihost;
+      $c->{_igroup} = $igroup;
+      $ihost++;
+      next;
+    }
+  }
 }
 
 sub print_host_list {
-  my @list = get_host_list;
-  for ( @list ){
-    my $c = $configs{$_};
-    my $u = $c->{User};
-    my $p = $c->{Port};
-    my $hh = $c->{HostName};
-    $u  = $u ? $u.'@' : '';
-    $p  = $p ? ':'.$p : '';
-    $hh = $hh ? $hh.$p : $c->{Host}.$p;
-    printf "%10s%-30s%s\n", $u, $c->{Host}, $hh;
+
+  build_config unless @configs;
+  pack_config_info();
+  my @list = get_host_list(@_);
+
+#  for my $c ( @list ){
+#    say '==============';
+#    for ( sort keys %$c ) {
+#      my $v = $c->{$_} || '';
+#      chomp $v;
+#      say '** ',$_,' => ',$v;
+#    }
+#  }
+#  exit;
+  for my $c ( @list ){
+
+    # GROUP
+    if ($c->{_type} eq 'group') {
+      #print "\n" unless $groupOnly;
+      print "$c->{_igroup}.      @@ ",$c->{_name},"\n";
+    }
+
+    # DATA
+    next unless $c->{_type} eq 'data';
+    my $u = $c->{User} || '';
+    my $p = $c->{Port} || '';
+    my $hn = $c->{HostName} || $c->{Host} || '';
+    my $h  = $c->{Host} || '';
+    my $at = '@';
+
+    # Color
+    unless ($option{b}) {
+      $at &&= scolored($at, 'red');
+      $u  &&= scolored($u,  'bright_yellow');
+      $p  &&= scolored($p,  'white');
+      $hn &&= scolored($hn, 'white');
+      $h  &&= scolored($h,  'bright_green');
+    }
+
+    $u &&= $u.$at;
+    $p &&= ":$p";
+    $h   = $h eq $hn && $p ? "$h$p" : $h;
+    
+    print scolorf(4, "$c->{_ihost})");
+    print scolorf(15, $u);
+    print scolorf(-20, $h);
+    print scolorf(20, $hn);
+    print scolorf(-6, $p);
+    print "\n";
+    #print "\n" unless $index % 5;
   }
+
 }
 
 sub usage{
   print "# usage : pssh <command> <options> \n";
+  print "\n";
   print "# Commands\n";
   for ( sort keys %commands ){
     my $val = $commands{$_};
     my $type = ref $val;
-    my $des = sprintf "    %-10s : ",$_;;
-    $des .= $val->{description}||'' if 'HASH' eq $type;
-    $des .= $val->[1]||'' if 'ARRAY' eq $type;
+    my $des = sprintf "    %s : ", scolorf(-10, $_, 'bright_green');
+    # if config is hash
+    $des .= $val->{description} || '' if 'HASH' eq $type;
+
+    # if config is ARRAY. Default
+    if ('ARRAY' eq $type) {
+      my $_des = $val->[1];
+      # split description if not ref
+      $_des = [split "\n", $_des] unless ref $_des;
+      # if description is ARRAY for multi lines
+      $_des = join(("\n".(' ' x 17)), @$_des);
+      if ($option{b}) { $_des = colorstrip($_des); }
+      $des .= $_des;
+    }
     print $des,"\n";
   }
+  print "\n";
   print "# Options\n";
   for( @options_string2 ){
     printf "    %-20s : %s\n", join(' ',@{$_->[0]}), $_->[1];
+  }
+}
+
+sub pssh_cat {
+  my $fh = IO::File->new($PSSH_CONFIG,'r'); 
+  $_[0] ||= '.*';
+  say grep /$_[0]/o, <$fh>;
+}
+
+sub pssh_key_deploy {
+  my ( $server, $key ) = @_;
+  my ( $D, $A ) =qw'~/.ssh ~/.ssh/authorized_keys';
+  unless ($server && $key){
+    print "@_\n";
+    usage();
+    die;
+  }
+  my $command =  qq{cat $key | ssh $server "mkdir -p $D && cat >> $A"}; 
+  say $command
+  system $command
+}
+
+
+
+
+if( @ARGV == 0 ) {
+  usage();
+  exit 0;
+}
+
+main();
+sub main {
+  bash_completion();
+  if( @ARGV > 0 ){
+    my @com;
+    Getopt::Long::Configure ("bundling");
+    GetOptions (\%option,
+      @option_template,
+      '<>'=>sub{
+        push @com, @_;
+      }
+    );
+  
+    # Help
+    if( $option{h}){
+      usage();
+      exit 0;
+    }
+  
+    if( $option{config} ){
+      $PSSH_CONFIG = $option{config};
+      die "ERROR : $PSSH_CONFIG doesn't exists." unless -e $PSSH_CONFIG;
+    }
+  
+  
+    my $com = shift @com;
+  
+    ## Check command
+    unless( $com && exists $commands{$com} ){
+      usage();
+      exit 1;
+    }
+  
+  
+    if( $commands{$com} ){
+      my $command = $commands{$com};
+      my $type = ref $command;
+      if( 'CODE' eq $type ){ 
+        $command->(@com);
+      }elsif ( 'HASH' eq $type ){
+        $command->{command}->(@com);
+      }elsif ( 'ARRAY' eq $type ){
+        $command->[0]->(@com);
+      }
+      exit;
+    }
+  
+    #system $editor, $PSSH_CONFIG;
+  }
+}
+
+#### Control completion command in the begining
+sub bash_completion {
+  if( $ARGV[0] eq 'completion' ){
+    shift @ARGV;
+    my $COMP_CWORD = $ENV{COMP_CWORD} ;
+    my $cur = '';
+    $cur = pop @ARGV if $COMP_CWORD != $#ARGV || $ARGV[-1]=~/^\s*/;
+    if ( $cur =~ /^-/ ){
+      /^$cur/ and print $_," " for @options_string;
+    }elsif( $ARGV[-1] =~ /^(-c|--config)$/ ){
+      print join ' ', map{ -d && "$_/\n" || $_ }glob "'$cur*'";
+    }else{
+      print join " ", grep { /^$cur/ } keys %commands if @ARGV < 2;
+    }
+    exit 0;
+  }
+  if( $ARGV[0] eq 'bash_completion_template' ){
+    pssh_bash_completion_template();
+    exit 0;
   }
 }
 
@@ -261,63 +545,23 @@ sub pssh_bash_completion_template {
   print q|function _pssh_completion { export COMP_CWORD COMP_POINT COMP_LINE;COMPREPLY=( $(pssh completion "${COMP_WORDS[@]}" ) ); }; complete -o nospace -F _pssh_completion pssh |;
 }
 
-sub pssh_cat {
-  my $file = shift || $PSSH_CONFIG;
-  my $fh = IO::File->new($PSSH_CONFIG,'r'); 
-  print <$fh>;
+sub scolorf {
+  my ($width, $string, @color) = @_;
+  my $colored  = '';
+  if ($option{b}) {
+    return sprintf '%'.$width.'s', colorstrip($string);
+  } else {
+    $colored = @color ? colored($string, @color) : $string;
+    my $w  = length colorstrip($colored);
+    my $wc = length $colored;
+    my $sign = $width > 0 ? '' : '-';
+    return sprintf '%'.$sign.(abs($width)+$wc-$w).'s', $colored;
+  }
 }
 
-sub pssh_key_deploy {
-  my ( $server, $key ) = @_;
-  my ( $D, $A ) =qw'~/.ssh ~/.ssh/authorized_keys';
-  print( qq{cat $key | ssh $server "mkdir -p $D && cat >> $A"},"i\n" );
-  system( qq{cat $key | ssh $server "mkdir -p $D && cat >> $A"} );
+sub scolored {
+  my ($string, @color) = @_;
+  return $string if $option{b};
+  return colored($string, @color);
 }
 
-
-
-
-if( @ARGV > 0 ){
-  #say Dumper \@ARGV;
-  my %option;
-  my @com;
-  Getopt::Long::Configure ("bundling");
-  GetOptions (\%option,
-    @option_template,
-    '<>'=>sub{
-      push @com, @_;
-    }
-  );
-  #say Dumper \%option, \@com, \@ARGV;
-  if( $option{config} ){
-    $PSSH_CONFIG = $option{config};
-    die "ERROR : $PSSH_CONFIG doesn't exists." unless -e $PSSH_CONFIG;
-  }
-
-  my $com = shift @com;
-
-  ## Check command
-  unless( $com && exists $commands{$com} ){
-    usage();
-    exit 1;
-  }
-  if( $option{h} ){
-    usage();
-    exit 0;
-  }
-
-  if( $commands{$com} ){
-    my $command = $commands{$com};
-    my $type = ref $command;
-    if( 'CODE' eq $type ){ 
-      $command->(@ARGV);
-    }elsif ( 'HASH' eq $type ){
-      $command->{command}->(@ARGV);
-    }elsif ( 'ARRAY' eq $type ){
-      $command->[0]->(@ARGV);
-    }
-    exit;
-  }
-
-  #system $editor, $PSSH_CONFIG;
-}

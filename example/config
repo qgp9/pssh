@@ -5,79 +5,135 @@
 
 ## Analyzing
 
-## GITHUB : Every Comment will be conserved;
+
+## Variable
+
+
+
+## Groups: GITHUB  : Every Comment will be conserved;
+
 # This comment will be placed before this line.
 Host github-user1
   HostName github.com
   User git
   IdentityFile ~/.ssh/key/github/github_user1_id_rsa
+
 Host github-user2
   HostName github.com
   User git
   IdentityFile ~/.ssh/key/github/github_user2_id_rsa
 
+## Groups: VPS 
 # DO at amsterdam
+
 Host d1
   HostName 192.168.1.101
   User user1
   IdentityFile ~/.ssh/key/do/d1_id_rsa
+  PubkeyAuthentication yes
+  Protocol 2
+  ForwardX11 no
 Host d2
   HostName 192.168.1.102
   User user1
-  IdentityFile ~/.ssh/key/do/d2_id_rsa
+  IdentityFile ~/.ssh/key/do/d1_id_rsa
+  PubkeyAuthentication yes
+  Protocol 2
+  ForwardX11 no
 Host d3
   HostName 192.168.1.103
   User user1
-  IdentityFile ~/.ssh/key/do/d3_id_rsa
+  IdentityFile ~/.ssh/key/do/d1_id_rsa
+  PubkeyAuthentication yes
+  Protocol 2
+  ForwardX11 no
+# Without pkey but with variabled option
+
+Host d4
+  HostName 192.168.1.101
+  User user1
+  PubkeyAuthentication yes
+  Protocol 2
+  ForwardX11 no
+  # "x" should be instead of empty space.
+
+# You don't need "x" without 4th field.
+Host d4
+  HostName 192.168.1.101
+  User user1
+            PubkeyAuthentication yes
+  Protocol 2
+  ForwardX11 no
+
+
+
+Host d4
+  HostName 192.168.1.101
+  User user1
+   PubkeyAuthentication yes
+  Protocol 2
+  ForwardX11 no
+                       # just sugar for better display.
 
 # VULTR
+
 Host v1
   HostName 192.168.2.101
   User user2
   Port 13789
   IdentityFile ~/.ssh/key/vultr/v1_id_rsa
+
 Host v2
   HostName 192.168.2.102
   User user2
   Port 16523
   IdentityFile ~/.ssh/key/vultr/v2_id_rsa
+
 Host v3
   HostName 192.168.2.103
   User user2
   Port 16234
   IdentityFile ~/.ssh/key/vultr/v3_id_rsa
 
-# AWS Seoul
+
+
+## Groups: AWS  Seoul
+
 Host a1
   HostName 192.168.3.101
   User ubuntu
   Port 12643
   IdentityFile ~/.ssh/key/aws/a1_id_rsa
 
+## Groups: ETC 
+
 # Servers with configurations
+
 Host la1
   HostName [1234:1234:123:1234:1:1:1234:0001]
   User root
   IdentityFile ~/.ssh/key/etc/la1_id_rsa
   ProxyCommand ssh -W [%h]:%p $1
-  # You can add any further options like above
-  # Also Comments
+# You can add any further options like above
+# Also Comments
 
 # Without server alias or user or port, is just fine
+
 Host 192.168.3.101
   IdentityFile ~/.ssh/key/aws/a1_id_rsa
 
 # '|' is optional, space is enough
+
 # and comment
 Host myserver
   HostName myserver.com
   User root
   IdentityFile ~/.ssh/key/mykey
 # without '|' but also without server name
+
 Host myserver2.com
   User root
   IdentityFile ~.ssh/key/mykey
-
 
 Host *
 Protocol 2
