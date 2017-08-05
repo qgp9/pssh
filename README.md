@@ -48,6 +48,7 @@ But if any line begin with `|`, `$` ,`+` or `-`, they will be translated by `pss
 
 ## Rules
 * A line begins with
+
   | Begins with | RegExp | Descriptions |
   |:-----------:|:------:|:-------------|
   | `+`     | `/^\s*\+/` | Ignore a line. |
