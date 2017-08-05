@@ -5,7 +5,7 @@ A script to manage ssh/config
 1. Put a configuration file at  `~/.ssh/pssh/.ssh-config`
 2. Install it : `pssh install`
 
-## Big chages of files and command options!!
+## Usage
 * All files are under ~/.ssh/pssh ( essentialy just a .ssh-config )
 * Usage
 ```
@@ -36,7 +36,7 @@ $ pssh -h
 
 * Bash completion comes!!
 ```
-echo "eval $(pssh bash_completion_template)" >> ~/.bash_profile
+echo 'eval $(pssh bash_completion_template)' >> ~/.bash_profile
 ```
   * NOTE : You may need an additional path in advance.
 
