@@ -45,6 +45,7 @@ IdentityFile ~/.ssh/key/id_rsa
 ControlMaster auto
 ControlPath ~/.ssh/controlmasters/%r@%h:%p
 ControlPersist 1h
+```
 
 ## Usage
 * All files are under ~/.ssh/pssh ( essentialy just a .ssh-config )
@@ -118,4 +119,3 @@ But if any line begin with `|`, `$` ,`+` or `-`, they will be translated by `pss
 
 
 
-```
