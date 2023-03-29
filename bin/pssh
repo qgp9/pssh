@@ -1,67 +1,101 @@
 #!/usr/bin/env python3
 
 import yaml
-import csv
 import re
-import pprint
-pp = pprint.PrettyPrinter(indent=4)
+from functools import reduce
 
-vars = {}
-groups = []
+def gen_fields_list(names):
+  fields = [ re.findall(r'^(?:(\w+)\|)?(.+)', name)[0] for name in names ]
+  return {
+    'long': [ name[1] for name in fields ],
+    'short': [ name[0] for name in fields ],
+    'map': { name[0]: name[1] for name in fields if name[0] } | { name[1]: name[1] for name in fields }
+  }
 
 class Host:
   field_orders = ['hostname', 'identity_file', 'ssh_options']
+  fields_of_list = gen_fields_list(['a|aliases', 'g|groups', 'o|ssh_options', 'ssh_options_post', 'others'])
+  fields_of_str = gen_fields_list(['h|hostname', 'group', 'i|identity_file', 'u|username', 'p|port', 'raw'])
 
   def __init__(self):
-    self.aliases = []
-    self.group = []
-    self.groups = []
-    self.hostname = None
-    self.identity_file = None
-    self.username = None
-    self.other_options = []
-    self.port = None
-    self.ssh_options = []
-    self.ssh_options_post = []
-    self.raw = None
-
-  def print(self):
-    pp.pprint(self.__dict__)
+    for attr in Host.fields_of_list['long']:
+      setattr(self, attr, [])
+    for attr in Host.fields_of_str['long']:
+      setattr(self, attr, None)
 
   def add(self, item, value):
-    if item in ['a', 'aliases']:
-      self.aliases.append(value)
-    elif item in ['group']:
-      self.group = value
-    elif item in ['g', 'groups']:
-      self.groups.append(value)
-    elif item in ['h', 'hostname']:
-      self.hostname = value
-    elif item in ['i', 'identity_file']:
-      self.identity_file = value
-    elif item in ['o', 'ssh_options']:
-      self.ssh_options.append(value)
-    elif item in ['p', 'port']:
-      self.port = value
-    elif item in ['u', 'username']:
-      self.username = value
-    elif item == 'raw':
-      self.raw = value
+    if item in Host.fields_of_list['map']:
+      getattr(self, Host.fields_of_list['map'][item]).append(value)
+    elif item in Host.fields_of_str['map']:
+      setattr(self, Host.fields_of_str['map'][item], value)
+    elif item:
+      self.others.append({ item: value })
+
+  def handle_raw(self, raw):
+    self.add('raw', raw)
+    if isinstance(raw, dict):
+      for k, v in raw.items():
+        self.add('aliases', k)
+        if isinstance(v, dict):
+          self.handle_dict(v)
+        elif isinstance(v, str):
+          self.handle_str(v)
+        else:
+          raise Exception('Unknown type: ' + str(type(v)))
+    elif isinstance(raw, str):
+      self.handle_str(raw)
     else:
-      self.other_options.append({ item: value })
+      raise Exception('Unknown type: ' + str(type(raw)))
+
+  def handle_dict(self, host_dict):
+    for k, v in host_dict.items():
+      if k[0].isupper():
+        self.add('ssh_options', k + ' ' + v)
+      else:
+        self.add(k, v)
+
+  def handle_str(self, host_str):
+    # Split lines by newline and dash
+    rows = re.split(r'\s*[\r\n]+(?:\s*-\s+)?|\s+-\s+', host_str)
+    for row in rows:
+      s = row.strip()
+      # If any line starts with an uppercase letter, it is an ssh option
+      if s and s[0].isupper():
+        self.add('ssh_options', s)
+      elif s and s[0] == '#':
+        continue
+      else:
+        # Otherwise, it is a fields
+        # Split fields by space, comma, or double quotes
+        # FIXME: single quote?
+        fields = re.findall(r'(?:[^\s,"]|"(?:\\.|[^"])*")+', s)
+        for j in range(len(fields)):
+          k = j if j < len(Host.field_orders) else -1
+          self.handle_field_str(fields[j].strip(), Host.field_orders[k])
+          # FIXME: different behavior from second line without expected option?
+
+  def handle_field_str(self, raw, expected):
+    s = raw
+    ss = strip_quotes(s)
+    if ss[0].isupper():
+      self.add('ssh_options', ss)
+      return
+    elif ss[0] == '#':
+      return
+    args = ss.split('=', 2)
+    if len(args) == 2:
+      self.add(args[0], strip_quotes(args[1]))
+    else:
+      self.add(expected, s)
 
   def to_ssh_config(self):
     res = [] 
-    if self.aliases and self.hostname:
+    if self.aliases:
       res.append('Host ' + ' '.join(self.aliases))
-      res.append('  HostName ' + self.hostname)
-    elif not self.aliases and self.hostname:
+      if self.hostname:
+        res.append('  HostName ' + self.hostname)
+    elif self.hostname:
       res.append('Host ' + self.hostname)
-    elif self.aliases and not self.hostname:
-      res.append('Host ' + ' '.join(self.aliases))
-      res.append('  HostName ' + self.aliases[0])
-    else:
-      pass # do nothinggg
 
     if self.identity_file:
       res.append('  IdentityFile ' + self.identity_file)
@@ -85,6 +119,15 @@ class Parser:
     self.groups = []
     self.vars = {}
 
+  def handle_vars_in_tree(self, obj):
+    if isinstance(obj, dict):
+      return { k: self.handle_vars_in_tree(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+      return [ self.handle_vars_in_tree(item) for item in obj ]
+    elif isinstance(obj, str):
+      return self.handle_vars_in_string(obj)
+    return obj
+
   def parse(self):
     with open(self.filename) as f:
       yaml_data = yaml.load(f, Loader=yaml.SafeLoader)
@@ -95,7 +138,11 @@ class Parser:
         k = nomarize_group_name(k)
         if k.startswith(':'):
           self.handle_special_key(k, v)
+
+    # Handle variables
+    yaml_data = self.handle_vars_in_tree(yaml_data)
   
+    # Parse hosts
     for items in yaml_data:
       for k, v in items.items():
         k = nomarize_group_name(k)
@@ -107,76 +154,15 @@ class Parser:
     for item in hosts:
       host = Host()
       host.add('group', group_name)
-      host.add('raw', item)
-      if isinstance(item, dict):
-        for k, v in item.items():
-          host.add('aliases', k)
-          if isinstance(v, list):
-            print ("DEBUG: LIST: ",v)
-          elif isinstance(v, dict):
-            self.handle_host_dict(v, host)
-          elif isinstance(v, str):
-            self.handle_host_str(v, host)
-      elif isinstance(item, str):
-        self.handle_host_str(item, host)
-      else:
-        print("ERROR: host should be dictionary")
-        pp.pprint(item)
-        exit(1) # TODO
+      host.handle_raw(item)
       self.hosts.append(host)
-
-  def handle_host_dict(self, host_dict, host):
-    for k, v in host_dict.items():
-      if k[0].isupper():
-        host.add('ssh_options', k + ' ' + v)
-      else:
-        host.add(k, v)
-  
-  def handle_host_str(self, host_str, host):
-    #rows = host_str.splitlines()
-    rows = re.split(r'\s*[\r\n]+|\s+-\s+', host_str)
-    for i in range(len(rows)):
-      s = rows[i].strip()
-      # If any line starts with an uppercase letter, it is an ssh option
-      if s and s[0].isupper():
-        host.add('ssh_options', s)
-      elif s and s[0] == '#':
-        continue
-      else:
-        # Otherwise, it is a fields
-        fields=re.findall(r'(?:[^\s,"]|"(?:\\.|[^"])*")+', s)
-        for j in range(len(fields)):
-          k = j if j < len(Host.field_orders) else -1
-          self.handle_field_str(fields[j].strip(), host, Host.field_orders[k])
-          # FIXME: different behavior from second line without expected option?
-
-  def handle_field_str(self, raw, host, expected):
-    s = self.handle_vars_in_string(raw)
-    ss = strip_quotes(s)
-    if ss[0].isupper():
-      host.add('ssh_options', ss)
-      return
-    elif ss[0] == '#':
-      return
-    args = ss.split('=', 2)
-    if len(args) == 2:
-      host.add(args[0], strip_quotes(args[1]))
-    else:
-      host.add(expected, s)
 
   def handle_special_key(self, key, value):
     if key == ':vars':
       if isinstance(value, dict):
-        for k, v in value.items():
-          self.vars[k] = v
+        self.vars |= value
       elif isinstance(value, list):
-        for v in value:
-          if isinstance(v, dict):
-            for k, v in v.items():
-              self.vars[k] = v
-          else:
-            print("ERROR: each var should be dictionary")
-            exit(1) # TODO
+        self.vars |= { k: v for dic in value for k, v in dic.items()}
       else:
         print("ERROR: vars should be dictionary or list")
         exit(1) # TODO
@@ -189,8 +175,7 @@ class Parser:
       if var_name in self.vars:
         raw = raw.replace('$' + var_name, self.vars[var_name])
       else:
-        print("ERROR: Undefined variable: " + var_name)
-        exit(1)
+        pass
     return raw
   
   def post_process(self):
@@ -227,14 +212,12 @@ class Parser:
   def print(self):
     for host in self.hosts:
       host.print()
-      
-
+ 
 def nomarize_group_name(group_name):
   return re.sub(r'(^[^:\w]+)|([^\w]+$)', '', group_name).replace('\s+', '-')
 
 def strip_quotes(s):
   return s.strip('"\'').strip()
-
 
 def main():
   parser = Parser('pssh.yml')
@@ -245,4 +228,3 @@ def main():
 
 if __name__ == '__main__':
   main()
-
