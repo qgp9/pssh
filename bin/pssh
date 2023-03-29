@@ -1,567 +1,248 @@
-#!/usr/bin/env perl
-
-use strict;
-use warnings;
-use v5.010;
-use Data::Dumper;
-use Getopt::Long;
-use IO::File;
-use Term::ANSIColor qw( colored colorstrip );
-
-
-### CUSTOM CONFIGURATION
-my $O_SSH_DIR     = "$ENV{HOME}/.ssh";
-my $O_SSH_CONFIG  = "$ENV{HOME}/.ssh/config";
-
-my $PSSH_DIR    = "$O_SSH_DIR/pssh";
-my $PSSH_CONFIG = "$PSSH_DIR/.ssh_config";
-
-my $PSSH_BAK    = "$PSSH_DIR/backup";
-my $PSSH_TMP    = "$PSSH_DIR/tmp";
-
-my $editor      = $ENV{EDIT_COMMAND} || $ENV{EDITOR} || 'vim';
-my $indent      = ' ' x 2;
-
-my %custom_command = (
-);
-my @custom_options = (
-);
-
-### Let's Start!!
-### Site Configuration
-my $config_string = '';
-my %option = ();   # Commandline option
-my @option_template = ( 'config|c=s', 'h|help', 'b', 'g|group:s', 'G=s');
-my @options_string = qw/-c --config -h --help -g --group -G/;
-my @options_string2 = (
-  [ [qw/-c --config/], 'Use custom pssh config file' ],
-  [ [qw/-h --help/],   'Display Help' ],
-  [ [qw/-b/],   'display without color' ],
-  [ [qw/-g --group/],   'group option for list' ],
-  [ [qw/-G/],           'group option for list' ],
-);
-my %commands = ();
-
-sub comm { $commands{$_[0]} = $_[1] }
-
-comm cat      => [ \&pssh_cat, 
-  [
-    "Print Pssh config file with grep",
-    scolored("usage: pssh cat [string to grep]", "bright_magenta")
-  ]
-];
-comm edit     => [ sub { system($editor,$PSSH_CONFIG); },
-  "Edit Pssh config file", 
-];
-comm install  => [ sub { build_config() and write_config() }, 
-  "Install Pssh config file to $O_SSH_CONFIG"
-];
-comm key_deploy  => [ \&pssh_key_deploy,
-  "Deploy pub key to ssh server : pssh key_deploy <server> <file>"
-];
-comm list     => [ sub { print_host_list(@_); },
-  [
-    'Host List',
-    scolorf(0,"usage: pssh list [string to grep] [-g [group index]] [-G [grep in groups]]", 'bright_magenta'),
-    "-g withoud 'group index' will list only a group list",
-    "-G will grep group names and inline comments and print with it's hosts",
-  ]
-];
-comm path     => [ sub { print "$PSSH_DIR\n"}, 
-  "Print Path of pssh directory" 
-];
-comm test    => [ sub {  build_config() and pack_config() and print $config_string },
-  "Compile $PSSH_CONFIG and print on screen"
-];
-
-
-#### Site Variables
-my @config_string;
-my %variables;
-my %configs;
-my @configs;
-my @groups;
-my %groups;
-my @option_G;
-
-sub _do_what_config {
-  my $cb = shift or die $!;
-  open my $in_fh, '<'. $PSSH_CONFIG or die $!,' ',$PSSH_CONFIG;
-  $cb->($in_fh);
-  close $in_fh;
-}
-
-sub build_config {
-  open my $in_fh, '<'. $PSSH_CONFIG or die $!,' ',$PSSH_CONFIG;
-
-  push @configs, {_type => 'head'};
-
-  while( $_ = <$in_fh> ){
-    my $o = $_;
-
-    /^\s*\+/            #### Dummy :Lines. Just ignore and remove them
-      and next; 
-
-    /^\s*\$\w+\s*=/     #### Variable
-      and parse_variable($in_fh,$_)
-      and next;
-
-    # interpolate variables
-    s/(\$\{(\w+)\})/defined $variables{$2}?$variables{$2}:$1/ge;
-    s/(\$(\w+))/defined $variables{$2}?$variables{$2}:$1/ge;
-
-    s/^\s*(\|\s*)*-+//;
-    s/^\s*(\|\s*)*#/#/;
-
-    s/^\s*@@+\s*(\w+)/## Groups: $1 /
-      and push @configs, {_type => 'group', _name => $1, _raw_string => $o};
-
-    # TODO add to configs here?
-    /^\s*\|/            #### Data Lines
-      and parse_data_line($_) 
-      and next;
-
-    /^\s*HOST\s+(\s+)/
-      and push @configs, {HOST => $1, _type => 'raw'}; # TODO and $config{}
-
-
-    ### Anything Else
-    $config_string .= $_; # Temporary. TODO remove this after test
-    $configs[-1]{_sub_string} .= $_;
-  }
-  close $in_fh;
-}
-
-sub pack_config {
-  $config_string ='';
-  for my $i (0 .. @configs) {
-    my $conf = $configs[$i];
-    if (($conf->{_type} || '') eq 'data') {
-      $config_string .= "\n";
-      $config_string .= $conf->{_config_string} || '';
-      $conf->{options}
-        and $config_string .= $indent.$conf->{options};
-    }
-    $config_string .= $conf->{_sub_string} || '';
-  }
-  1;
-}
-
-sub write_config{
-  ### Make backup Directory
-  use File::Path;
-  unless( -d $PSSH_BAK ){
-    File::Path::make_path($PSSH_BAK) or die $!,' ',$PSSH_BAK;
-  }
-  ### Make Backup file
-  use File::Copy;
-  copy( $O_SSH_CONFIG, $PSSH_BAK.'/config-'.time.'.bak' ) or die "Copy failed: $!";
-
-  ### Write
-  open my $out_fh, '>', $O_SSH_CONFIG or die "$! $O_SSH_CONFIG";
-  print $out_fh $config_string if $config_string;
-  close $out_fh;
-}
-
-sub parse_data_line {
-  shift;
-  my $o = $_;
-
-  my $conf_string = '';
-
-  my @lines = split "\n", $_;
-
-  ### manipulate comments after data
-  my ( $data, $comments ) = $lines[0] =~ (/([^#]*)(.*)/g);
-
-  ### manipulate data
-  my ( $host, $address, $idkey, $options ) = (
-    $data =~ /^\s*\|\s*([^|\s]*)[\s\|]*([^\|\s]*)[\s\|]*([^|\s]*)[\s\|]*(.*)/msg
-  );
-
-  ### manipulate server info
-  my ( $user, $hostname, $port ) = (
-    $address =~ /\s*(?:(\S+)@)?(\[.+?\]|[^:]+)(?::(\d+))?/g
-  );
-
-  ### At least, $hostname should be
-  die "wrong syntext at $.\n$_\n" unless  $hostname ;
-
-  ### if a server alias isn't
-  unless( $host ){
-    $host = $hostname;
-    $hostname = undef;
-  }
-
-  $idkey='' if  defined $idkey && $idkey eq 'x'  ;
-
-  $conf_string .= $comments."\n"                   if $comments;
-  $conf_string .= "Host $host\n";
-  $conf_string .= "${indent}HostName $hostname\n"  if $hostname;
-  $conf_string .= "${indent}User $user\n"          if $user;
-  $conf_string .= "${indent}Port $port\n"          if $port;
-  $conf_string .= "${indent}IdentityFile $idkey\n" if $idkey;
-
-  $options .= "\n".join "\n", @lines[1..$#lines] if @lines > 1;
-  #$conf_string .= $options                   if $options;
-
-  my $conf = {
-    _type     => 'data',
-    Host      => $host, 
-    HostName  => $hostname,
-    User      => $user,
-    Port      => $port,
-    IdentityFile => $idkey,
-    options      => $options,
-    _config_string => $conf_string,
-    _raw_string => $lines[0],
-    _raw_strings => $o,
-  };
-  $configs{$address} = $conf;
-  push @configs, $conf;
-
-  return $conf_string;
-}
-
-sub parse_variable {
-  my $in_fh = shift;
-  shift;
-  /\s*\$(\w+)\s*=\s*\{(.*)\}/
-    and $variables{$1}=$2
-    and return 1;
-  /\s*\$(\w+)\s*=\s*\{(.*)/ and do {
-    my $vname = $1;
-    my $vstr  = $2.''?$2."\n":'';
-    while ( $_=<$in_fh> ){
-      /\s*\}/ and last;
-      /(\s*.+)\}/ and $vstr.=$1 and last;
-      $vstr.=$_;
-    }
-    $variables{$vname} = $vstr;
-    return 1;
-  };
-  /\s*\$(\w+)\s*=\s*(.*)/ 
-    and $variables{$1}=$2
-    and return 1;
-}
-
-=pod
-  get_host_list
-
-  Generate Host/Group List with options/sub command
-
-  1. if first argument is true, 
-    * Grep it though '_raw_string' of all cofing
-    * Case insensitive
-
-  2. if option '-g' is applied without value
-    * Print only group list
-
-  3. if option '-g' is applied with an alphabets /[a-zA-Z]\.?/
-    * Print a corespond group and hosts
-=cut
-
-sub get_host_list {
-
-  build_config unless @configs;
-  pack_config_info();
-
-  # To Fill and return
-  my @list;
-  my @_configs = @configs;
-
-  ## OPTION G
-  if ($option{G}) {
-    @_configs = ();
-    my $regx = join '|', split /\W/, $option{G};
-    my %igroups = ();
-    for my $g ( @groups ){
-      $g->{_raw_string} =~ /$regx/io
-        and $igroups{$g->{_igroup}} = 1;
-    }
-    for my $c ( @configs ){
-      $c->{_igroup} && $igroups{$c->{_igroup}}
-        and push @_configs, $c
-    }
-    #return @list
-  }
-
-  ## Others
-  my ($subcom) = @_;
-
-  # options
-  my $groupOnly = undef;
-  my %igroups;
-  my $grep_group = undef;
-
-  if (defined $option{g}){
-    my $g = $option{g};
-    $groupOnly = 1 if $g eq '';
-    %igroups = map {uc($_) => 1} grep /[a-zA-Z]/, split '', $g
-  }
-
-  for my $c ( @_configs ){
-
-    my $type      = $c->{_type};
-    my $raw       = $c->{_raw_string} || '';
-    #my $igroup    = $c->{_igroup};
-    #my $ihost     = $c->{_ihost};
-    my $is_group  = $type eq 'group';
-    my $is_data   = $type eq 'data';
-
-    # Group Only
-    next if $groupOnly && !$is_group;
-
-    # grep
-    if ($subcom && !($option{G} && $is_group)) {
-      $raw =~ /$subcom/oi
-        or next;
-    }
-
-    # Filter Group
-    next if %igroups && !$igroups{$c->{_igroup} || ''};
-
-    # Push to list
-    push @list, $c;
-  }
-
-  return @list
-}
-
-sub pack_config_info {
-  build_config unless @configs;
-  my $ihost = 1;
-  my $igroup = undef;
-  my $index = -1;
-  if ($configs[0]{_type} ne 'group') {
-    unshift @configs, {_type => 'group', _name => 'HEAD', _raw_string => 'HEAD'}
-  }
-  for my $c ( @configs ){
-    $index++;
-    $c->{_index}  = $index;
-
-    if ($c->{_type} eq 'group') {
-      $igroup and $igroup++ or $igroup = 'A';
-      $c->{_igroup} = $igroup;
-      push @groups, $c;
-      next;
-    }
-
-    if ($c->{_type} eq 'data') {
-      $c->{_ihost} = $ihost;
-      $c->{_igroup} = $igroup;
-      $ihost++;
-      next;
-    }
-  }
-}
-
-sub print_host_list {
-
-  build_config unless @configs;
-  pack_config_info();
-  my @list = get_host_list(@_);
-
-#  for my $c ( @list ){
-#    say '==============';
-#    for ( sort keys %$c ) {
-#      my $v = $c->{$_} || '';
-#      chomp $v;
-#      say '** ',$_,' => ',$v;
-#    }
-#  }
-#  exit;
-  for my $c ( @list ){
-
-    # GROUP
-    if ($c->{_type} eq 'group') {
-      #print "\n" unless $groupOnly;
-      print "$c->{_igroup}.      @@ ",$c->{_name},"\n";
-    }
-
-    # DATA
-    next unless $c->{_type} eq 'data';
-    my $u = $c->{User} || '';
-    my $p = $c->{Port} || '';
-    my $hn = $c->{HostName} || $c->{Host} || '';
-    my $h  = $c->{Host} || '';
-    my $at = '@';
-
-    # Color
-    unless ($option{b}) {
-      $at &&= scolored($at, 'red');
-      $u  &&= scolored($u,  'bright_yellow');
-      $p  &&= scolored($p,  'white');
-      $hn &&= scolored($hn, 'white');
-      $h  &&= scolored($h,  'bright_green');
-    }
-
-    $u &&= $u.$at;
-    $p &&= ":$p";
-    $h   = $h eq $hn && $p ? "$h$p" : $h;
-    
-    print scolorf(4, "$c->{_ihost})");
-    print scolorf(15, $u);
-    print scolorf(-20, $h);
-    print scolorf(20, $hn);
-    print scolorf(-6, $p);
-    print "\n";
-    #print "\n" unless $index % 5;
-  }
-
-}
-
-sub usage{
-  print "# usage : pssh <command> <options> \n";
-  print "\n";
-  print "# Commands\n";
-  for ( sort keys %commands ){
-    my $val = $commands{$_};
-    my $type = ref $val;
-    my $des = sprintf "    %s : ", scolorf(-10, $_, 'bright_green');
-    # if config is hash
-    $des .= $val->{description} || '' if 'HASH' eq $type;
-
-    # if config is ARRAY. Default
-    if ('ARRAY' eq $type) {
-      my $_des = $val->[1];
-      # split description if not ref
-      $_des = [split "\n", $_des] unless ref $_des;
-      # if description is ARRAY for multi lines
-      $_des = join(("\n".(' ' x 17)), @$_des);
-      if ($option{b}) { $_des = colorstrip($_des); }
-      $des .= $_des;
-    }
-    print $des,"\n";
-  }
-  print "\n";
-  print "# Options\n";
-  for( @options_string2 ){
-    printf "    %-20s : %s\n", join(' ',@{$_->[0]}), $_->[1];
-  }
-}
-
-sub pssh_cat {
-  my $fh = IO::File->new($PSSH_CONFIG,'r'); 
-  $_[0] ||= '.*';
-  say grep /$_[0]/o, <$fh>;
-}
-
-sub pssh_key_deploy {
-  my ( $server, $key ) = @_;
-  my ( $D, $A ) =qw'~/.ssh ~/.ssh/authorized_keys';
-  unless ($server && $key){
-    print "@_\n";
-    usage();
-    die;
-  }
-  my $command =  qq{cat $key | ssh $server "mkdir -p $D && cat >> $A"}; 
-  say $command
-  system $command
-}
-
-
-
-
-if( @ARGV == 0 ) {
-  usage();
-  exit 0;
-}
-
-main();
-sub main {
-  bash_completion();
-  if( @ARGV > 0 ){
-    my @com;
-    Getopt::Long::Configure ("bundling");
-    GetOptions (\%option,
-      @option_template,
-      '<>'=>sub{
-        push @com, @_;
-      }
-    );
+#!/usr/bin/env python3
+
+import yaml
+import csv
+import re
+import pprint
+pp = pprint.PrettyPrinter(indent=4)
+
+vars = {}
+groups = []
+
+class Host:
+  field_orders = ['hostname', 'identity_file', 'ssh_options']
+
+  def __init__(self):
+    self.aliases = []
+    self.group = []
+    self.groups = []
+    self.hostname = None
+    self.identity_file = None
+    self.username = None
+    self.other_options = []
+    self.port = None
+    self.ssh_options = []
+    self.ssh_options_post = []
+    self.raw = None
+
+  def print(self):
+    pp.pprint(self.__dict__)
+
+  def add(self, item, value):
+    if item in ['a', 'aliases']:
+      self.aliases.append(value)
+    elif item in ['group']:
+      self.group = value
+    elif item in ['g', 'groups']:
+      self.groups.append(value)
+    elif item in ['h', 'hostname']:
+      self.hostname = value
+    elif item in ['i', 'identity_file']:
+      self.identity_file = value
+    elif item in ['o', 'ssh_options']:
+      self.ssh_options.append(value)
+    elif item in ['p', 'port']:
+      self.port = value
+    elif item in ['u', 'username']:
+      self.username = value
+    elif item == 'raw':
+      self.raw = value
+    else:
+      self.other_options.append({ item: value })
+
+  def to_ssh_config(self):
+    res = [] 
+    if self.aliases and self.hostname:
+      res.append('Host ' + ' '.join(self.aliases))
+      res.append('  HostName ' + self.hostname)
+    elif not self.aliases and self.hostname:
+      res.append('Host ' + self.hostname)
+    elif self.aliases and not self.hostname:
+      res.append('Host ' + ' '.join(self.aliases))
+      res.append('  HostName ' + self.aliases[0])
+    else:
+      pass # do nothinggg
+
+    if self.identity_file:
+      res.append('  IdentityFile ' + self.identity_file)
+    if self.username:
+      res.append('  User ' + self.username)
+    if self.port:
+      res.append('  Port ' + self.port)
+    if self.ssh_options:
+      for opt in self.ssh_options:
+        s = opt.strip()
+        if re.match(r'^Host\s', s):
+          res.append(s)
+        else:
+          res.append('  ' + s)
+    return "\n".join(res)
+
+class Parser:
+  def __init__(self, filename):
+    self.filename = filename
+    self.hosts = []
+    self.groups = []
+    self.vars = {}
+
+  def parse(self):
+    with open(self.filename) as f:
+      yaml_data = yaml.load(f, Loader=yaml.SafeLoader)
+
+    # Read special keys first; :vars
+    for items in yaml_data:
+      for k, v in items.items():
+        k = nomarize_group_name(k)
+        if k.startswith(':'):
+          self.handle_special_key(k, v)
   
-    # Help
-    if( $option{h}){
-      usage();
-      exit 0;
-    }
-  
-    if( $option{config} ){
-      $PSSH_CONFIG = $option{config};
-      die "ERROR : $PSSH_CONFIG doesn't exists." unless -e $PSSH_CONFIG;
-    }
-  
-  
-    my $com = shift @com;
-  
-    ## Check command
-    unless( $com && exists $commands{$com} ){
-      usage();
-      exit 1;
-    }
-  
-  
-    if( $commands{$com} ){
-      my $command = $commands{$com};
-      my $type = ref $command;
-      if( 'CODE' eq $type ){ 
-        $command->(@com);
-      }elsif ( 'HASH' eq $type ){
-        $command->{command}->(@com);
-      }elsif ( 'ARRAY' eq $type ){
-        $command->[0]->(@com);
-      }
-      exit;
-    }
-  
-    #system $editor, $PSSH_CONFIG;
-  }
-}
+    for items in yaml_data:
+      for k, v in items.items():
+        k = nomarize_group_name(k)
+        if not k.startswith(':'):
+          self.handle_hosts(k, v)
 
-#### Control completion command in the begining
-sub bash_completion {
-  if( $ARGV[0] eq 'completion' ){
-    shift @ARGV;
-    my $COMP_CWORD = $ENV{COMP_CWORD} ;
-    my $cur = '';
-    $cur = pop @ARGV if $COMP_CWORD != $#ARGV || $ARGV[-1]=~/^\s*/;
-    if ( $cur =~ /^-/ ){
-      /^$cur/ and print $_," " for @options_string;
-    }elsif( $ARGV[-1] =~ /^(-c|--config)$/ ){
-      print join ' ', map{ -d && "$_/\n" || $_ }glob "'$cur*'";
-    }else{
-      print join " ", grep { /^$cur/ } keys %commands if @ARGV < 2;
-    }
-    exit 0;
-  }
-  if( $ARGV[0] eq 'bash_completion_template' ){
-    pssh_bash_completion_template();
-    exit 0;
-  }
-}
+  def handle_hosts(self, group_name, hosts):
+    self.groups.append(group_name)
+    for item in hosts:
+      host = Host()
+      host.add('group', group_name)
+      host.add('raw', item)
+      if isinstance(item, dict):
+        for k, v in item.items():
+          host.add('aliases', k)
+          if isinstance(v, list):
+            print ("DEBUG: LIST: ",v)
+          elif isinstance(v, dict):
+            self.handle_host_dict(v, host)
+          elif isinstance(v, str):
+            self.handle_host_str(v, host)
+      elif isinstance(item, str):
+        self.handle_host_str(item, host)
+      else:
+        print("ERROR: host should be dictionary")
+        pp.pprint(item)
+        exit(1) # TODO
+      self.hosts.append(host)
 
-sub pssh_bash_completion_template {
-  print q|function _pssh_completion { export COMP_CWORD COMP_POINT COMP_LINE;COMPREPLY=( $(pssh completion "${COMP_WORDS[@]}" ) ); }; complete -o nospace -F _pssh_completion pssh |;
-}
+  def handle_host_dict(self, host_dict, host):
+    for k, v in host_dict.items():
+      if k[0].isupper():
+        host.add('ssh_options', k + ' ' + v)
+      else:
+        host.add(k, v)
+  
+  def handle_host_str(self, host_str, host):
+    #rows = host_str.splitlines()
+    rows = re.split(r'\s*[\r\n]+|\s+-\s+', host_str)
+    for i in range(len(rows)):
+      s = rows[i].strip()
+      # If any line starts with an uppercase letter, it is an ssh option
+      if s and s[0].isupper():
+        host.add('ssh_options', s)
+      elif s and s[0] == '#':
+        continue
+      else:
+        # Otherwise, it is a fields
+        fields=re.findall(r'(?:[^\s,"]|"(?:\\.|[^"])*")+', s)
+        for j in range(len(fields)):
+          k = j if j < len(Host.field_orders) else -1
+          self.handle_field_str(fields[j].strip(), host, Host.field_orders[k])
+          # FIXME: different behavior from second line without expected option?
 
-sub scolorf {
-  my ($width, $string, @color) = @_;
-  my $colored  = '';
-  if ($option{b}) {
-    return sprintf '%'.$width.'s', colorstrip($string);
-  } else {
-    $colored = @color ? colored($string, @color) : $string;
-    my $w  = length colorstrip($colored);
-    my $wc = length $colored;
-    my $sign = $width > 0 ? '' : '-';
-    return sprintf '%'.$sign.(abs($width)+$wc-$w).'s', $colored;
-  }
-}
+  def handle_field_str(self, raw, host, expected):
+    s = self.handle_vars_in_string(raw)
+    ss = strip_quotes(s)
+    if ss[0].isupper():
+      host.add('ssh_options', ss)
+      return
+    elif ss[0] == '#':
+      return
+    args = ss.split('=', 2)
+    if len(args) == 2:
+      host.add(args[0], strip_quotes(args[1]))
+    else:
+      host.add(expected, s)
 
-sub scolored {
-  my ($string, @color) = @_;
-  return $string if $option{b};
-  return colored($string, @color);
-}
+  def handle_special_key(self, key, value):
+    if key == ':vars':
+      if isinstance(value, dict):
+        for k, v in value.items():
+          self.vars[k] = v
+      elif isinstance(value, list):
+        for v in value:
+          if isinstance(v, dict):
+            for k, v in v.items():
+              self.vars[k] = v
+          else:
+            print("ERROR: each var should be dictionary")
+            exit(1) # TODO
+      else:
+        print("ERROR: vars should be dictionary or list")
+        exit(1) # TODO
+    else:
+      # TODO: handle other special keys or give warning
+      return None
+
+  def handle_vars_in_string(self, raw):
+    for var_name in re.findall(r'\$(\w+)', raw):
+      if var_name in self.vars:
+        raw = raw.replace('$' + var_name, self.vars[var_name])
+      else:
+        print("ERROR: Undefined variable: " + var_name)
+        exit(1)
+    return raw
+  
+  def post_process(self):
+    for host in self.hosts:
+      if not host.hostname:
+        continue
+      found = re.findall(r'^(?:(\S+?)@)?([^:\s]+)(?::(\S+))?$', host.hostname)
+      args = found[0]
+      if args[0]:
+        host.username = args[0]
+      if args[1]:
+        host.hostname = args[1]
+      if args[2]:
+        host.port = args[2]
+
+      if host.username is not None:
+        host.ssh_options_post.append('User ' + host.username)
+      if host.port is not None:
+        host.ssh_options_post.append('Port ' + host.port)
+      if host.identity_file is not None:
+        host.ssh_options_post.append('IdentityFile ' + host.identity_file)
+
+  def to_ssh_config(self):
+    res = []
+    for group in self.groups:
+      res.append('## GROUP: ' + group)
+      for host in self.hosts:
+        if host.group == group:
+          res.append(host.to_ssh_config())
+          res.append('')
+      res.append('')
+    print("\n".join(res))
+      
+  def print(self):
+    for host in self.hosts:
+      host.print()
+      
+
+def nomarize_group_name(group_name):
+  return re.sub(r'(^[^:\w]+)|([^\w]+$)', '', group_name).replace('\s+', '-')
+
+def strip_quotes(s):
+  return s.strip('"\'').strip()
+
+
+def main():
+  parser = Parser('pssh.yml')
+  parser.parse()
+  parser.post_process()
+  #parser.print()
+  parser.to_ssh_config()
+
+if __name__ == '__main__':
+  main()
 

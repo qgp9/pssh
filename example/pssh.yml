@@ -1,0 +1,61 @@
+---
+
+- ==== DEV ===:
+  - pi1 pi3:  pi@pi1.local  $VKEY 
+  - pi2: |
+        pi@pi2 $VKEY
+
+
+- === HOME ===:
+  - ledi:   root@192.168.1.1
+  - ha:     paul9@172.26.1.100          $VKEY
+
+- === VPS ===:
+  - vps1:   ubuntu@example.com        $VKEY # vultr
+  - vps2:   root@10.0.0.1:248         $VKEY # 128|  3| FI/Helsinki
+  # vps2: oracle
+
+- === STORAGE ===:
+  - st1:  sss71233@u71233.your-storagebox.de:23
+  # https://robot.hetzner.com/storage
+
+- === GIT ===:
+  - github-another:   git@github.com     $KEY_GITHUB_ANOTHER
+  - github.com:       git@github.com     $KEY_GITHUB_QGP
+    github-qgp:
+    github.qgp:
+  - x:                git.assembla.com   ~/.ssh/assembla.com
+      - Protocol 2 Strict
+      - HostKeyChecking no
+
+- ZeroTier:
+  - vps1.z:     ubuntu@10.111.10.2
+  - pizero.z:   pi@10.111.10.3
+  - gl1.z:      root@10.147.20.178          x   $OPENWRT
+
+- Cloudflare_Tunnel:
+  - vps1.c:     ubuntu@vps1-c.example.com   $VKEY
+  - vps2.c:     root@vps2-c.example.com     $VKEY
+  - |
+      Host *.c
+      ProxyCommand cloudflared access ssh -T %h
+
+- Default:
+  - |
+      Host *
+      Protocol 2
+      IdentityFile ~/.ssh/id_rsa
+      StrictHostKeyChecking no
+      ForwardAgent yes
+      ControlMaster auto
+      ControlPath ~/.ssh/controlmasters/%r@%h:%p
+      ControlPersist 1h
+      ForwardAgent yes
+
+- :vars:
+    PC: ProxyCommand ssh
+    VKEY: ~/.ssh/pkey/vultr_id_rsa
+    PKEY: ~/.ssh/id_rsa_beom
+    KEY_GITHUB_ANOTHER: ~/.ssh/pkey/id_rsa_github_bschang
+    KEY_GITHUB_QGP: ~/.ssh/pkey/id_rsa_github_qgp_skepties
+    OPENWRT: "HostKeyAlgorithms +ssh-rsa"
